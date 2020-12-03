@@ -7,10 +7,9 @@ function _shap_sample(explain::DataFrame,
                       n_target_features::Int64,
                       target_features::Array{String,1},
                       feature_names::Array{String,1},
-                      feature_names_symbol::Array{Symbol,1},
                       sample_size::Int64,
                       parallel::Symbol,
-                      seeds::Union{Array, Integer},
+                      rng::AbstractRNG,
                       chunk::Bool,
                       model,
                       predict_function::Function,
@@ -22,7 +21,7 @@ function _shap_sample(explain::DataFrame,
     elseif any(parallel .== [:samples, :both])
         data_sample = Array{DataFrame}(undef, 1)  # Parallel with pmap().
     end
-
+/
     for i in if any(parallel .== [:none, :features])
         1:sample_size  # Non-parallel loop over Monte Carlo samples.
     elseif any(parallel .== [:samples, :both])
@@ -30,15 +29,13 @@ function _shap_sample(explain::DataFrame,
     end
 
         # Shuffle the column indices, keeping all column indices.
-        Random.seed!(seeds[i])
-        feature_indices_random = Random.randperm(n_features)
+        feature_indices_random = Random.randperm(rng, n_features)
 
         feature_names_random = feature_names[feature_indices_random]
 
         # Select a reference instance that all instances in explain will be compared to in
         # this Monte Carlo iteration.
-        Random.seed!(seeds[i])
-        reference_index = rand(1:n_instances)
+        reference_index = rand(rng, 1:n_instances)
 
         # Shuffle the column order for the randomly selected instance.
         reference_instance = reference[[reference_index], feature_indices_random]
@@ -48,7 +45,8 @@ function _shap_sample(explain::DataFrame,
         # For the instance(s) to be explained, shuffle the columns to match the randomly selected and shuffled instance.
         explain_instances = explain[!, feature_indices_random]
 
-        target_feature_indices_shuffled = map(x -> (1:n_features)[x .== feature_names_random][1], target_features)
+        target_feature_indices_shuffled = map(x -> (1:n_features)[x .== feature_names_random][1],
+                                              target_features)
         #----------------------------------------------------------------------
         # Inner loop sampling over target features, creating Frankenstein instances.
         data_sample_feature = Array{DataFrame}(undef, n_target_features)
@@ -84,7 +82,7 @@ function _shap_sample(explain::DataFrame,
         # The "* 2" multiplier is because each instance has two Frankenstein instances.
 
         # Re-order columns for the user-defined predict() function
-        data_sample[i] = data_sample[i][!, feature_names_symbol]
+        data_sample[i] = data_sample[i][!, feature_names]
         data_sample[i].index = repeat(repeat(1:n_instances_explain, outer = 2), outer = n_target_features)
         data_sample[i].feature_group = repeat(repeat(["real_target", "fake_target"], inner = n_instances_explain), outer = n_target_features)
         data_sample[i].feature_name = repeat(target_features, inner = n_instances_explain * 2)

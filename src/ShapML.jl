@@ -52,30 +52,24 @@ function shap(;explain::DataFrame,
               reference::Union{DataFrame, Nothing} = nothing,
               model,
               predict_function::Function,
-              target_features::Union{Vector, Nothing} = nothing,
+              target_features::Union{AbstractVector{<:AbstractString}, Nothing} = nothing,
               sample_size::Integer = 60,
               parallel::Union{Symbol, Nothing} = nothing,
-              seed::Integer = 1,
+              rng::AbstractRNG = Random.GLOBAL_RNG,
               precision::Union{Integer, Nothing} = nothing,
               chunk::Bool = true,
               reconcile_instance::Bool = false
               )
 
-    feature_names = String.(names(explain))
-    feature_names_symbol = Symbol.(feature_names)
+    feature_names = names(explain)
 
     if (target_features === nothing)
 
         target_features = copy(feature_names)  # Default is to explain with all features.
 
     else
-
-        if !all(isa.(target_features, String))
-            error(""""target_features" should be an array of feature names of type "String".""")
-        end
-
-        if !all(map(x -> any(x .== target_features), target_features))
-            error("""One or more "target_features" is not in String.(names(explain)).""")
+        if !all(∈(feature_names), target_features)
+            error("One or more \"target_features\" is not in String.(names(explain)).")
         end
     end
     #----------------------------------------------------------------------------
@@ -90,7 +84,7 @@ function shap(;explain::DataFrame,
     else
 
         if names(explain) != names(reference)
-            error(""""explain" and "reference" should have the same model features and no outcome column.""")
+            error("\"explain\" and \"reference\" should have the same model features and no outcome column.")
         end
     end
 
@@ -102,20 +96,13 @@ function shap(;explain::DataFrame,
         parallel = :none
     end
 
-    if !any(parallel .== [:none, :samples, :features, :both])
-         error(""""parallel" should be one of [:none, :samples, :features, :both].""")
+    if parallel ∉ (:none, :samples, :features, :both)
+         error("\"parallel\" should be one of [:none, :samples, :features, :both].")
     end
-    #--------------------------------------------------------------------------
-    # Create a vector of random seeds to get reproducible results with both
-    # serial and parallel computations. This is not the perfect solution because there
-    # could potentially be correlation between the seeds, but the effect on randomness,
-    # if any, will be small. To-do: Pass in seed generator objects.
-    Random.seed!(seed)
-    seeds = abs.(rand(Int, sample_size))
     #--------------------------------------------------------------------------
     # Main Shapley value computation from _shap_sample(). This code is either
     # run serially or in parallel.
-    if any(parallel .== [:none, :features])
+    if parallel ∈ (:none, :features)
 
         data_predict = _shap_sample(explain,
                                     reference,
@@ -125,17 +112,16 @@ function shap(;explain::DataFrame,
                                     n_target_features,
                                     target_features,
                                     feature_names,
-                                    feature_names_symbol,
                                     sample_size,
                                     parallel,
-                                    seeds,
+                                    rng,
                                     chunk,
                                     model,  # chunk = true.
                                     predict_function,  # chunk = true.
                                     precision  # chunk = true.
                                     )
 
-    elseif any(parallel .== [:samples, :both])
+    elseif parallel ∈ (:samples, :both)
 
         data_predict = pmap(_i -> _shap_sample(explain,
                                                reference,
@@ -145,10 +131,9 @@ function shap(;explain::DataFrame,
                                                n_target_features,
                                                target_features,
                                                feature_names,
-                                               feature_names_symbol,
                                                sample_size,
                                                parallel,
-                                               seeds[_i],
+                                               rng,
                                                chunk,
                                                model,  # chunk = true.
                                                predict_function,  # chunk = true.
@@ -160,7 +145,7 @@ function shap(;explain::DataFrame,
     # a single DataFrame for the user-defined predict() function.
     data_predict = vcat(data_predict...)
 
-    if any(parallel .== [:samples, :both])
+    if parallel ∈ (:samples, :both)
         data_predict = vcat(data_predict...)
         data_predict.sample = repeat(1:sample_size, inner = n_instances_explain * n_target_features * 2)
     end
@@ -180,14 +165,14 @@ function shap(;explain::DataFrame,
                          )
     #--------------------------------------------------------------------------
     # Melt the input 'explain' DataFrame for merging the model features to the Shapley values.
-    data_merge = DataFrames.stack(explain, feature_names_symbol)
+    data_merge = DataFrames.stack(explain, feature_names)
     rename!(data_merge, Dict(:variable => "feature_name", :value => "feature_value"))
     data_merge.feature_name = String.(data_merge.feature_name)  # Coerce for merging.
 
     data_merge.index = repeat(1:n_instances_explain, n_features)  # The merge index for each instance.
 
     # Each instance in explain has one Shapley value per instance in a long DataFrame format.
-    data_shap = join(data_shap, data_merge, on = [:index, :feature_name], kind = :left)
+    data_shap = leftjoin(data_shap, data_merge, on = [:index, :feature_name])
 
     # Re-order columns for easier reading.
     DataFrames.select!(data_shap, [:index, :feature_name, :feature_value, :shap_effect, :shap_effect_sd, :intercept])

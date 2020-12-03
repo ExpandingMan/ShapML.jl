@@ -43,7 +43,7 @@ function _aggregate(data_predicted::DataFrame, sample_size::Integer, n_instances
      end
   end
 
-  data_predicted = DataFrames.DataFrame(vcat(shap_effect_instances...))
+  data_predicted = DataFrames.DataFrame(vcat(shap_effect_instances...), :auto)
 
   if reconcile_instance
      rename!(data_predicted, [:shap_effect, :shap_effect_sd, :shap_effect_var])
