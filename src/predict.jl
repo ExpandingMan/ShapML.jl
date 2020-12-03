@@ -40,11 +40,14 @@ function _predict(;reference::DataFrame, data_predict::DataFrame, model, predict
   # Final Shapley value calculation collapsed across Monte Carlo samples using a
   # custom _aggregate() function for speed and reduced memory. The dimensions of
   # the output DataFrame, 'data_predicted', are ('n instances' * 'n features') by 5.
-  if reconcile_instance
-    data_predicted = _aggregate(data_predicted, sample_size, n_instances_explain, n_target_features, reconcile_instance)
-  else
-    data_predicted = _aggregate(data_predicted, sample_size, n_instances_explain, n_target_features, reconcile_instance)
-  end
+  #data_predicted = if reconcile_instance
+  #  _aggregate(data_predicted, sample_size, n_instances_explain, n_target_features, reconcile_instance)
+  #else
+  #  _aggregate(data_predicted, sample_size, n_instances_explain, n_target_features, reconcile_instance)
+  #end
+  data_predicted = combine(groupby(data_predicted, [:index, :feature_name]),
+                           :shap_effect => std => :shap_effect_sd,
+                           :shap_effect => mean => :shap_effect)
   #----------------------------------------------------------------------------
   # Adjust the instance-level Shapley values so that the sum across features equals the model prediction.
   if reconcile_instance
@@ -58,7 +61,7 @@ function _predict(;reference::DataFrame, data_predict::DataFrame, model, predict
     data_predicted = leftjoin(data_predicted, data_model_pred, on = [:index])
 
     data_shap_pred = combine(groupby(data_predicted, :index),
-                             shap_pred = :shap_effect => sum)
+                             :shap_effect => sum => :shap_pred)
     data_shap_pred.shap_pred .= data_shap_pred.shap_pred .+ intercept
 
     data_predicted = leftjoin(data_predicted, data_shap_pred, on = [:index])
@@ -66,12 +69,12 @@ function _predict(;reference::DataFrame, data_predict::DataFrame, model, predict
     data_predicted[:, :residual] = data_predicted.model_pred - data_predicted.shap_pred
 
     data_scale = combine(groupby(data_predicted, :index),
-                         variance_scale = :shap_effect_var => x -> x / maximum(x))
+                         :shap_effect_var => x -> x / maximum(x) => :variance_scale)
 
     data_predicted[:, :variance_scale] .= data_scale.variance_scale
 
     data_scale = combine(groupby(data_predicted, :index),
-                         variance_scale_total = :variance_scale => sum)
+                         :variance_scale => sum => :variance_scale_total)
 
     data_predicted = leftjoin(data_predicted, data_scale, on = [:index])
 
